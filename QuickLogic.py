@@ -2,15 +2,38 @@ import argparse
 import usb.core
 import usb.util
 from termcolor import colored
+from sigrok.sigrok import Sigrok
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--file", required=True, metavar="IoT_Capture", help="Name of the saved capture file")
 parser.add_argument("--ch", required=True, metavar="0,4,7", help="This is to specify the channels to listen on the logic analyzer (comma separated)")
-parser.add_argument("-r", "--rate", type=int, metavar="60000", help="This is to set the rate to something other than default")
+parser.add_argument("-cs", "--speed", type=int, metavar="4000000", help="This is to set the capture speed to something other than default (4000000)")
+parser.add_argument("-s", "--size", type=int, metavar="10000000", help="THis is to set the capture size to something other than default (10000000)")
+parser.add_argument("--timeout", type=int, metavar="30", help="This will set a timeout value other than the default 15 seconds")
 arguments = parser.parse_args()
 
-### function for finding and selecting a usb
-KNOWN_DEVICES = {
+### This will be for grabbing the user defined capture speed or using the default 
+if arguments.speed:
+    ReadSpeed = arguments.speed
+else:
+    ReadSpeed = 4000000
+
+### This will be for grabbing the user defined capture size or using the default
+if arguments.size:
+    ReadSize = arguments.size
+else:
+    ReadSize = 10000000
+
+### This is to set the timeout from user input
+if arguments.timeout:
+    ReadTimeout = arguments.timeout
+else:
+    ReadTimeout = 15
+
+
+### function for finding and selecting a USB
+## Lookup Table for known logic analyzers
+KNOWN_DEVICES = { 
     (0x0925, 0x3881): "Lakeview Research Saleae Logic"
 }
 
@@ -40,17 +63,6 @@ else:
     else:
         print(f"{colored('Invalid Selection: ', 'red')} Choose a number between 1 and {len(devices)}")
 
-print(f"{Selected_Device.manufacturer} {Selected_Device.Product}:{Selected_Name}")
-    
-        
-
-
-### This will be for grabbing the user defined rate or using the default //NEEDS TO BE UPDATED LATER
-if arguments.rate:
-    ReadRate = arguments.rate
-else:
-    ReadRate = 15000
-
 ### This takes the input for ch and splits them at the comma and ensures they all fit between 0-7. If not it throws an error
 channels = [int(ch.strip()) for ch in arguments.ch.split(",")]
 if not all(0 <= ch <= 7 for ch in channels):
@@ -65,3 +77,9 @@ if not all(0 <= ch <= 7 for ch in channels):
 #     print(f"{arguments.file}\n{channels}\n{ReadRate}", file=CaptureFile)
 
 # print("The File has been created!")
+
+
+### This will begin the implementation of the Sigrok bindings
+# Context = Sigrok()
+# driver = Context.drivers['fx2lafw']
+# print(dir(driver))

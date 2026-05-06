@@ -4,20 +4,41 @@ import sys
 COMMON_BAUDS = [115200, 9600, 38400, 57600, 19200, 4800]
 SAMPLE_RATE = 8_000_000
 CHANNELS = [0, 1, 2, 3, 4, 5, 6, 7]
-
+Capture_File = "test_capture.sr"
 channel_data = {}
 active_CHANNELS = []
-##samples_per_bit = SAMPLE_RATE / COMMON_BAUDS[0] //This will go in the UART_Check function
 
 ## This is the list of functions
 ## Check for UART function
 def UART_Check (bits, SAMPLE_RATE, Capture_File):
+	samples_per_bit = round(SAMPLE_RATE / COMMON_BAUDS[0])
+	signal_start = bits.index(0)
+	signal_stagger = round(samples_per_bit / 2)
+	decoded_data = ""
+	binary_data = []
+	full_bytes = []
+	bytes_collected = 0
 
+## This gets a sample to test for ascii percentage before fully commiting the entire capture to decode
+	while bytes_collected < 100:
+		data_start = signal_start + samples_per_bit + signal_stagger
 
+		for b in range(8):
+			position  = data_start + (b * samples_per_bit)
+			binary_data.append(bits[position])
+
+		create_byte = ''.join(map(str, binary_data))
+		decoded_data += chr(int(create_byte[::-1], 2))
+		binary_data = []
+		try:
+			search_from = position + samples_per_bit
+			signal_start = search_from + bits[search_from:].index(0)
+		except ValueError:
+			break
+		bytes_collected += 1
+	return decoded_data
 
 ##Grabs .sr file anc checks magic bytes to see if it is a correct zip THIS WILL BE CHANGED AND WILL BE FROM THE COMMANDS PARAMETERS
-Capture_File = "test_capture.sr"
-
 if zipfile.is_zipfile(Capture_File):
 	print("Lets get diggin!")
 else:
@@ -52,3 +73,4 @@ for channel, bits in channel_data.items():
 		active_CHANNELS.append(channel)
 		print(f"Active channel on channel {channel}")
 
+print(UART_Check(channel_data[0], SAMPLE_RATE, Capture_File))

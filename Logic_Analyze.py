@@ -11,33 +11,57 @@ active_CHANNELS = []
 ## This is the list of functions
 ## Check for UART function
 def UART_Check (bits, SAMPLE_RATE, Capture_File):
-	samples_per_bit = round(SAMPLE_RATE / COMMON_BAUDS[0])
-	signal_start = bits.index(0)
-	signal_stagger = round(samples_per_bit / 2)
-	decoded_data = ""
-	binary_data = []
-	full_bytes = []
-	bytes_collected = 0
-
 ## This gets a sample to test for ascii percentage before fully commiting the entire capture to decode
-	while bytes_collected < 100:
-		data_start = signal_start + samples_per_bit + signal_stagger
-
-		for b in range(8):
-			position  = data_start + (b * samples_per_bit)
-			binary_data.append(bits[position])
-
-		create_byte = ''.join(map(str, binary_data))
-		decoded_data += chr(int(create_byte[::-1], 2))
+	
+	for baud in COMMON_BAUDS:
+		samples_per_bit = round(SAMPLE_RATE / baud)
+		signal_stagger = round(samples_per_bit / 2)
+		signal_start = bits.index(0)
+		decoded_data = ""
 		binary_data = []
-		try:
-			search_from = position + samples_per_bit
-			signal_start = search_from + bits[search_from:].index(0)
-		except ValueError:
-			break
-		bytes_collected += 1
-	return decoded_data
+		bytes_collected = 0
+		while bytes_collected < 100:
+			data_start = signal_start + samples_per_bit + signal_stagger
 
+			for b in range(8):
+				position  = data_start + (b * samples_per_bit)
+				binary_data.append(bits[position])
+
+			create_byte = ''.join(map(str, binary_data))
+			decoded_data += chr(int(create_byte[::-1], 2))
+			binary_data = []
+			try:
+				search_from = position + samples_per_bit
+				signal_start = search_from + bits[search_from:].index(0)
+			except ValueError:
+				break
+			bytes_collected += 1
+
+		
+		printable_characters = 0
+		for char in decoded_data:
+			if char.isprintable():
+				printable_characters += 1
+
+		print_percent = printable_characters / len(decoded_data) 
+		
+		if print_percent * 100 >= 85:
+			print(f"We got a match of {print_percent:.0%} at {baud}")
+			print(decoded_data)
+			while True:
+				response = input("A positive match was found! Would you like to print the decoded version to a file? (y/n): ").lower().strip()
+				if response in ['y', 'yes']:
+					print("Decoding...")
+					break
+				elif response in ['n', 'no']:
+					print("Exiting...")
+					break
+				else:
+					print("Invalid response please enter 'y' or 'n'.")
+			break
+
+
+	return decoded_data
 ##Grabs .sr file anc checks magic bytes to see if it is a correct zip THIS WILL BE CHANGED AND WILL BE FROM THE COMMANDS PARAMETERS
 if zipfile.is_zipfile(Capture_File):
 	print("Lets get diggin!")
@@ -67,10 +91,9 @@ for channel in CHANNELS:
 	channel_data[channel] = bits
 
 for channel, bits in channel_data.items():
-	if len(set(bits)) == 1:
-		print(f"Nothing going on at channel {channel}")
-	else:
+	if len(set(bits)) != 1:
 		active_CHANNELS.append(channel)
 		print(f"Active channel on channel {channel}")
 
-print(UART_Check(channel_data[0], SAMPLE_RATE, Capture_File))
+UART_Check(channel_data[0], SAMPLE_RATE, Capture_File)
+

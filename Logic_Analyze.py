@@ -1,5 +1,6 @@
 import zipfile
 import sys
+import os
 
 COMMON_BAUDS = [115200, 9600, 38400, 57600, 19200, 4800]
 SAMPLE_RATE = 8_000_000
@@ -10,10 +11,11 @@ active_CHANNELS = []
 
 ## This is the list of functions
 ## Check for UART function
-def UART_Check (bits, SAMPLE_RATE, Capture_File):
+def UART_Check (bits, SAMPLE_RATE, Capture_File, pin):
 ## This gets a sample to test for ascii percentage before fully commiting the entire capture to decode
 	
 	for baud in COMMON_BAUDS:
+		print("Analyzing for UART...")
 		samples_per_bit = round(SAMPLE_RATE / baud)
 		signal_stagger = round(samples_per_bit / 2)
 		signal_start = bits.index(0)
@@ -46,13 +48,34 @@ def UART_Check (bits, SAMPLE_RATE, Capture_File):
 		print_percent = printable_characters / len(decoded_data) 
 		
 		if print_percent * 100 >= 85:
-			print(f"We got a match of {print_percent:.0%} at {baud}")
-			print(decoded_data)
+			print(f"We got a match of {print_percent:.0%} at {baud} on channel: {pin}")
+			## This section is to decide i a full decode is wanted and perform the full decode and print to a file
 			while True:
 				response = input("A positive match was found! Would you like to print the decoded version to a file? (y/n): ").lower().strip()
 				if response in ['y', 'yes']:
 					print("Decoding...")
-					break
+					root, ext = os.path.splitext(Capture_File)
+					Full_Decode_File = root + "_UART_Decode.txt"
+					signal_start = bits.index(0)
+					with open(Full_Decode_File, 'w') as d:
+						d.write(f"Channel: {pin}\nBaudrate: {baud}\n=========================================\n")
+						while True:
+							data_start = signal_start + samples_per_bit + signal_stagger
+						
+							for b in range(8):
+								position  = data_start + (b * samples_per_bit)
+								binary_data.append(bits[position])
+
+							create_byte = ''.join(map(str, binary_data))
+							d.write(chr(int(create_byte[::-1], 2)))
+							binary_data = []
+							try:
+								search_from = position + samples_per_bit
+								signal_start = search_from + bits[search_from:].index(0)
+							except ValueError:
+								break
+						print(f"The Decoded capture is saved at {Full_Decode_File}")
+						break
 				elif response in ['n', 'no']:
 					print("Exiting...")
 					break
@@ -75,7 +98,6 @@ raw_data = bytearray()
 with zipfile.ZipFile(Capture_File, 'r') as capture:
 	files = capture.namelist()
 	df = [f for f in files if f.startswith("logic-1")]
-	print(df)
 
 ## breaks down the logic files into one byte array
 	for data_files in df:
@@ -95,5 +117,6 @@ for channel, bits in channel_data.items():
 		active_CHANNELS.append(channel)
 		print(f"Active channel on channel {channel}")
 
-UART_Check(channel_data[0], SAMPLE_RATE, Capture_File)
+for channel in active_CHANNELS:
+	UART_Check(channel_data[0], SAMPLE_RATE, Capture_File, channel)
 

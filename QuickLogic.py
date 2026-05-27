@@ -2,17 +2,29 @@ import argparse
 import zipfile
 import sys
 import os
-from termcolor import colored
 from sigrok.sigrok import Sigrok, ConfigKey
+from colorama import Fore, Style, init
+
+print(r"""
+   ____       _      _      __             _      
+  /___ \_   _(_) ___| | __ / /  ___   __ _(_) ___ 
+ //  / / | | | |/ __| |/ // /  / _ \ / _` | |/ __|
+/ \_/ /| |_| | | (__|   </ /__| (_) | (_| | | (__ 
+\___,_\ \__,_|_|\___|_|\_\____/\___/ \__, |_|\___|
+                                     |___/        
+The automated logic capture tool for hardware enumeration
+""")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--file", required=True, metavar="IoT_Capture", help="Name of the saved capture file")
 parser.add_argument("--ch", metavar="0,4,7", help="This is to specify the channels to listen on the logic analyzer (comma separated)")
 parser.add_argument("-cs", "--speed", type=int, metavar="4000000", help="This is to set the capture speed to something other than default (4000000)")
-parser.add_argument("-s", "--size", type=int, metavar="10000000", help="THis is to set the capture size to something other than default (10000000)")
+parser.add_argument("-s", "--size", type=int, metavar="10000000", help="This is to set the capture size to something other than default (10000000)")
 parser.add_argument("--timeout", type=int, metavar="30", help="This will set a timeout value other than the default 15 seconds")
 parser.add_argument("--analyze", action='store_true', help="This is for skipping the capture portion and just analyzing a saved capture")
 arguments = parser.parse_args()
+
+init(autoreset=True)
 
 ## Constants section
 COMMON_BAUDS = [115200, 9600, 38400, 57600, 19200, 4800]
@@ -20,18 +32,13 @@ channel_data = {}
 active_CHANNELS = []
 DRIVER_NAME = 'fx2lafw' ## In future versions this will be fixed to work with other types of LA's
 chunk_size = 4194304
+Findings = {}
 
-## This is for the channels arguements
-if arguments.ch:
-    channels = [int(ch.strip()) for ch in arguments.ch.split(",")]
-else:
-    channels = [0,1,2,3,4,5,6,7]
-
-### This will be for grabbing the user defined capture speed or using the default 
+### This will be for grabbing the user defined capture speed or using the default
 if arguments.speed:
     SAMPLE_RATE = arguments.speed
 else:
-    SAMPLE_RATE = 8000000
+    SAMPLE_RATE = 4000000
 
 ### This will be for grabbing the user defined capture size or using the default
 if arguments.size:
@@ -55,11 +62,12 @@ else:
 if arguments.ch:
     channels = [int(ch.strip()) for ch in arguments.ch.split(",")]
     if not all(0 <= ch <= 7 for ch in channels):
-        parser.error("Channels must be between 0 and 7")
+        parser.error(Fore.RED + "Channels must be between 0 and 7")
     else:
         CHANNELS = channels
 else:
     CHANNELS = [0, 1, 2, 3, 4, 5, 6, 7]
+
 
 ## Function to use the logic device selected and proceed to run a capture
 def run_capture(SAMPLE_RATE, ReadSize, CHANNELS, CaptureFile):
@@ -69,19 +77,19 @@ def run_capture(SAMPLE_RATE, ReadSize, CHANNELS, CaptureFile):
 	driver.init()
 	devices = driver.scan()
 	if not devices:
-		print("No devices were detected")
+		print(f"{Fore.RED}No devices were detected")
 		sys.exit()
 
-	print("Which device should we use?")
+	print(f"{Fore.CYAN}Which device should we use?")
 	for index, device in enumerate(devices, start=1):
-	    print(f"{index}: {device.vendor} {device.model}")
+		print(f"{index}: {device.vendor} {device.model}")
 
 	device_selection = int(input("\nSelect the device: "))
 	if 1 <= device_selection <= len(devices):
 		device = devices[device_selection - 1]
-		print(f"\nUsing: {device.vendor} {device.model}")
+		print(f"{Fore.GREEN}\nUsing: {device.vendor} {device.model}")
 	else:
-		print("Invalid selection")
+		print(f"{Fore.RED}Invalid selection")
 		sys.exit()
 
 	device.open()
@@ -91,64 +99,63 @@ def run_capture(SAMPLE_RATE, ReadSize, CHANNELS, CaptureFile):
 	device.enable_channels(*channel_strings)
 	session = sr.session(devices=device)
 	session.start()
-	print("Capturing...")
+	print(f"{Fore.CYAN}Capturing...")
 
-	## Being Capture
+	## Begin Capture
 	raw_data = bytearray()
 	packet_count = 0
 
 	while True:
-	    packet = session.next_packet(timeout=ReadTimeout)
+		packet = session.next_packet(timeout=ReadTimeout)
 
-	    if packet is None:
-	        print("Timeout - no data received")
-	        break
+		if packet is None:
+			print(f"{Fore.YELLOW}Timeout - no data received")
+			break
 
-	    if type(packet).__name__ == "EndPacket":
-	        print("End of capture")
-	        break
+		if type(packet).__name__ == "EndPacket":
+			break
 
-	    if type(packet).__name__ == "LogicPacket":
-	        raw_data.extend(packet.data)
-	        packet_count += 1
+		if type(packet).__name__ == "LogicPacket":
+			raw_data.extend(packet.data)
+			packet_count += 1
 
 	session.stop()
 	device.close()
-	print("Done capturing")
+	print(f"{Fore.CYAN}Done capturing")
 
 	### Build the .sr file
 	samplerate_mhz = SAMPLE_RATE / 1_000_000
 	probe_lines = "\n".join([f"probe{i+1}=D{ch}" for i, ch in enumerate(CHANNELS)])
 	metadata = f"""[global]
-	sigrok version=0.6.0-git-883c2ac
+sigrok version=0.6.0-git-883c2ac
 
-	[device 1]
-	capturefile=logic-1
-	total probes={len(CHANNELS)}
-	samplerate={samplerate_mhz} MHz
-	total analog=0
-	{probe_lines}
-	unitsize=1
-	"""
+[device 1]
+capturefile=logic-1
+total probes={len(CHANNELS)}
+samplerate={samplerate_mhz} MHz
+total analog=0
+{probe_lines}
+unitsize=1
+"""
 	### Split raw data into 4MB chunks
 	chunks = [raw_data[i:i+chunk_size] for i in range(0, len(raw_data), chunk_size)]
 
 	### Write the .sr zip file
 	with zipfile.ZipFile(CaptureFile, 'w', zipfile.ZIP_DEFLATED) as zf:
-	    zf.writestr("version", "2")
-	    zf.writestr("metadata", metadata)
-	    for i, chunk in enumerate(chunks, start=1):
-	        zf.writestr(f"logic-1-{i}", bytes(chunk))
+		zf.writestr("version", "2")
+		zf.writestr("metadata", metadata)
+		for i, chunk in enumerate(chunks, start=1):
+			zf.writestr(f"logic-1-{i}", bytes(chunk))
 
-	print(f"Capture saved to {CaptureFile} with {len(chunks)} chunks")
+	print(f"{Fore.GREEN}Capture saved to {CaptureFile} with {len(chunks)} chunks")
 
 
 ## This is the list of analyze functions
 ## Check for UART function
-def UART_Check (bits, SAMPLE_RATE, CaptureFile, pin):
-	## This gets a sample to test for ascii percentage before fully commiting the entire capture to decode
+def UART_Check(bits, SAMPLE_RATE, CaptureFile, pin):
+	## This gets a sample to test for ascii percentage before fully committing the entire capture to decode
 	for baud in COMMON_BAUDS:
-		print("Analyzing for UART...")
+		print(f"{Fore.CYAN}Analyzing for UART...")
 		signal_start = bits.index(0)
 		actual_spb = 0
 		while bits[signal_start + actual_spb] == 0:
@@ -158,11 +165,12 @@ def UART_Check (bits, SAMPLE_RATE, CaptureFile, pin):
 		decoded_data = ""
 		binary_data = []
 		bytes_collected = 0
+
 		while bytes_collected < 100:
 			data_start = signal_start + samples_per_bit + signal_stagger
 
 			for b in range(8):
-				position  = data_start + (b * samples_per_bit)
+				position = data_start + (b * samples_per_bit)
 				binary_data.append(bits[position])
 
 			create_byte = ''.join(map(str, binary_data))
@@ -175,62 +183,65 @@ def UART_Check (bits, SAMPLE_RATE, CaptureFile, pin):
 				break
 			bytes_collected += 1
 
-		
 		printable_characters = 0
 		for char in decoded_data:
 			if char.isprintable():
 				printable_characters += 1
 
-		print_percent = printable_characters / len(decoded_data) 
-		
+		print_percent = printable_characters / len(decoded_data)
+
 		if print_percent * 100 >= 90:
-			print(f"We got a match of {print_percent:.0%} at {baud} on channel: {pin}")
-			## This section is to decide if a full decode is wanted and perform the full decode and print to a file
+			print(f"{Fore.GREEN}We got a match of {print_percent:.0%} at {baud} on channel: {pin}")
+			Findings[pin] = f"Most likely UART Tx @ {baud} baud rate"
 			while True:
-				response = input("A positive match was found! Would you like to print the decoded version to a file? (y/n): ").lower().strip()
+				response = input(f"{Fore.GREEN}A positive match was found! Would you like to print the decoded version to a file? (y/n): ").lower().strip()
 				if response in ['y', 'yes']:
-					print("Decoding...")
+					print(f"{Fore.CYAN}Decoding...")
 					root, ext = os.path.splitext(CaptureFile)
 					Full_Decode_File = root + "_UART_Decode.txt"
 					signal_start = bits.index(0)
 					binary_data = []
+					bytes_written = 0
 					with open(Full_Decode_File, 'w') as d:
 						d.write(f"Channel: {pin}\nBaudrate: {baud}\n=========================================\n")
 						while True:
-							d.write(chr(int(create_byte[::-1], 2)))
-							d.flush()
 							data_start = signal_start + samples_per_bit + signal_stagger
 							for b in range(8):
-								position  = data_start + (b * samples_per_bit)
+								position = data_start + (b * samples_per_bit)
 								binary_data.append(bits[position])
 
 							create_byte = ''.join(map(str, binary_data))
 							d.write(chr(int(create_byte[::-1], 2)))
+							d.flush()
 							binary_data = []
+							bytes_written += 1
+							if bytes_written % 100 == 0:
+								print(f"{Fore.CYAN}[*] Decoding... {bytes_written} bytes decoded", end='\r')
 							try:
-								print(f"position: {position}, bits at position: {bits[position]}, bits at position+1: {bits[position+1]}, bits at position+spb: {bits[position+samples_per_bit]}")
 								search_from = position + samples_per_bit
 								signal_start = search_from + bits[search_from:].index(0)
 							except ValueError:
 								break
-					print(f"The Decoded capture is saved at {Full_Decode_File}")
+					print(f"\n{Fore.GREEN}The Decoded capture is saved at {Full_Decode_File}")
 					break
 				elif response in ['n', 'no']:
-					print("Exiting...")
+					print(f"{Fore.YELLOW}Exiting...")
 					break
 				else:
-					print("Invalid response please enter 'y' or 'n'.")
+					print(f"{Fore.RED}Invalid response please enter 'y' or 'n'.")
 			break
 
 	return decoded_data
+
+
 if not arguments.analyze:
 	run_capture(SAMPLE_RATE, ReadSize, CHANNELS, CaptureFile)
 
-##Grabs .sr file anc checks magic bytes to see if it is a correct zip THIS WILL BE CHANGED AND WILL BE FROM THE COMMANDS PARAMETERS
+## Grabs .sr file and checks magic bytes to see if it is a correct zip
 if zipfile.is_zipfile(CaptureFile):
-	print("File is Golden Ponyboy")
+	print(f"{Fore.GREEN}Capture file validated successfully")
 else:
-	print("Issues reading capture file please check!")
+	print(f"{Fore.RED}Issues reading capture file please check!")
 	sys.exit()
 
 ## reads .sr file and grabs the logic files that will be analyzed
@@ -240,7 +251,7 @@ with zipfile.ZipFile(CaptureFile, 'r') as capture:
 	files = capture.namelist()
 	df = [f for f in files if f.startswith("logic-1")]
 
-## breaks down the logic files into one byte array
+	## breaks down the logic files into one byte array
 	for data_files in df:
 		full_bytes = capture.read(data_files)
 		raw_data.extend(full_bytes)
@@ -252,13 +263,23 @@ for channel in CHANNELS:
 		bit = (byte >> channel) & 1
 		bits.append(bit)
 	channel_data[channel] = bits
-
+\
 for channel, bits in channel_data.items():
 	if len(set(bits)) != 1:
 		active_CHANNELS.append(channel)
-		print(f"Active channel on channel {channel}")
+		print(f"{Fore.GREEN}Active channel on channel {channel}")
+		Findings[channel] = "Unclassified"
+	else:
+		Findings[channel] = "No Traffic"
+
 
 for channel in active_CHANNELS:
 	UART_Check(channel_data[channel], SAMPLE_RATE, CaptureFile, channel)
 
-
+print(f"\n{Style.BRIGHT}{Fore.CYAN}========= Analysis Summary =========")
+for channel, result in Findings.items():
+	if result == "No Traffic":
+		print(f"{Fore.CYAN}Channel {channel}: {Fore.RED}{result}")
+	else:
+		print(f"{Fore.CYAN}Channel {channel}: {Fore.GREEN}{result}")
+print(f"{Fore.CYAN}====================================")

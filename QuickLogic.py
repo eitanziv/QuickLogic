@@ -2,6 +2,7 @@ import argparse
 import zipfile
 import sys
 import os
+import io
 from sigrok.sigrok import Sigrok, ConfigKey
 from colorama import Fore, Style, init
 
@@ -27,7 +28,6 @@ arguments = parser.parse_args()
 init(autoreset=True)
 
 ## Constants section
-COMMON_BAUDS = [115200, 9600, 38400, 57600, 19200, 4800]
 channel_data = {}
 active_CHANNELS = []
 DRIVER_NAME = 'fx2lafw' ## In future versions this will be fixed to work with other types of LA's
@@ -154,81 +154,98 @@ unitsize=1
 ## Check for UART function
 def UART_Check(bits, SAMPLE_RATE, CaptureFile, pin):
 	## This gets a sample to test for ascii percentage before fully committing the entire capture to decode
-	for baud in COMMON_BAUDS:
-		print(f"{Fore.CYAN}Analyzing for UART...")
-		signal_start = bits.index(0)
-		actual_spb = 0
-		while bits[signal_start + actual_spb] == 0:
-			actual_spb += 1
-		samples_per_bit = actual_spb
-		signal_stagger = round(samples_per_bit / 2)
-		decoded_data = ""
-		binary_data = []
-		bytes_collected = 0
+	print(f"{Fore.CYAN}Analyzing for UART...")
+	signal_start = bits.index(0)
+	actual_spb = 0
+	while bits[signal_start + actual_spb] == 0:
+		actual_spb += 1
+	samples_per_bit = actual_spb
+	signal_stagger = round(samples_per_bit / 2)
+	decoded_data = ""
+	binary_data = []
+	bytes_collected = 0
 
-		while bytes_collected < 100:
-			data_start = signal_start + samples_per_bit + signal_stagger
-
+	while bytes_collected < 100:
+		data_start = signal_start + samples_per_bit + signal_stagger
+		try:
 			for b in range(8):
 				position = data_start + (b * samples_per_bit)
 				binary_data.append(bits[position])
+		except Exception:
+			print(f"{Fore.RED}An error occurred reading the capture")
+		create_byte = ''.join(map(str, binary_data))
+		decoded_data += chr(int(create_byte[::-1], 2))
+		binary_data = []
+		try:
+			search_from = position + samples_per_bit
+			signal_start = search_from + bits[search_from:].index(0)
+		except ValueError:
+			break
+		bytes_collected += 1
 
-			create_byte = ''.join(map(str, binary_data))
-			decoded_data += chr(int(create_byte[::-1], 2))
-			binary_data = []
-			try:
-				search_from = position + samples_per_bit
-				signal_start = search_from + bits[search_from:].index(0)
-			except ValueError:
+	printable_characters = 0
+	for char in decoded_data:
+		if char.isprintable():
+			printable_characters += 1
+
+	print_percent = printable_characters / len(decoded_data)
+
+	if print_percent * 100 >= 90:
+		sr = "samplerate"
+		with zipfile.ZipFile(CaptureFile, "r", zipfile.ZIP_DEFLATED) as zf:
+			with zf.open("metadata", "r") as f:
+					with io.TextIOWrapper(f, encoding='utf-8') as data:
+						for line_num, line in enumerate(data, 1):
+							if sr in line:
+								raw_data = line.strip()
+								main = raw_data.split("=", 1)[1]
+								number = main.split(" ", 1)[0]
+								unit = main.split(" ", 1)[1]
+								if unit == "MHz":
+									SampleRate = int(float(number) * 1000000)
+								elif unit == "kHz":
+									SampleRate = int(float(number) * 1000)
+								else:
+									SampleRate = int(number)
+		baud = int(SampleRate / samples_per_bit)
+		print(f"{Fore.GREEN}We got a match of {print_percent:.0%} for UART TX using {baud} baud rate on channel: {pin}")
+		Findings[pin] = f"Most likely UART Tx @ {baud} baud rate"
+		while True:
+			print(f"{Style.BRIGHT}{Fore.CYAN}========= Decoded Sample =========\n{decoded_data}")
+			response = input(f"{Fore.GREEN}A positive match was found! Would you like to print the decoded version to a file? (y/n): ").lower().strip()
+			if response in ['y', 'yes']:
+				root, ext = os.path.splitext(CaptureFile)
+				Full_Decode_File = root + "_UART_Decode.txt"
+				signal_start = bits.index(0)
+				binary_data = []
+				bytes_written = 0
+				with open(Full_Decode_File, 'w') as d:
+					d.write(f"Channel: {pin}\nBaudrate: {baud}\nBegin Decoded Capture\n=========================================\n")
+					while True:
+						data_start = signal_start + samples_per_bit + signal_stagger
+						for b in range(8):
+							position = data_start + (b * samples_per_bit)
+							binary_data.append(bits[position])
+
+						create_byte = ''.join(map(str, binary_data))
+						d.write(chr(int(create_byte[::-1], 2)))
+						d.flush()
+						binary_data = []
+						bytes_written += 1
+						if bytes_written % 100 == 0:
+							print(f"{Fore.CYAN}[*] Decoding... {bytes_written} bytes decoded", end='\r')
+						try:
+							search_from = position + samples_per_bit
+							signal_start = search_from + bits[search_from:].index(0)
+						except ValueError:
+							break
+				print(f"\n{Fore.GREEN}The Decoded capture is saved at {Full_Decode_File}")
 				break
-			bytes_collected += 1
-
-		printable_characters = 0
-		for char in decoded_data:
-			if char.isprintable():
-				printable_characters += 1
-
-		print_percent = printable_characters / len(decoded_data)
-
-		if print_percent * 100 >= 90:
-			print(f"{Fore.GREEN}We got a match of {print_percent:.0%} at {baud} on channel: {pin}")
-			Findings[pin] = f"Most likely UART Tx @ {baud} baud rate"
-			while True:
-				response = input(f"{Fore.GREEN}A positive match was found! Would you like to print the decoded version to a file? (y/n): ").lower().strip()
-				if response in ['y', 'yes']:
-					print(f"{Fore.CYAN}Decoding...")
-					root, ext = os.path.splitext(CaptureFile)
-					Full_Decode_File = root + "_UART_Decode.txt"
-					signal_start = bits.index(0)
-					binary_data = []
-					bytes_written = 0
-					with open(Full_Decode_File, 'w') as d:
-						d.write(f"Channel: {pin}\nBaudrate: {baud}\n=========================================\n")
-						while True:
-							data_start = signal_start + samples_per_bit + signal_stagger
-							for b in range(8):
-								position = data_start + (b * samples_per_bit)
-								binary_data.append(bits[position])
-
-							create_byte = ''.join(map(str, binary_data))
-							d.write(chr(int(create_byte[::-1], 2)))
-							d.flush()
-							binary_data = []
-							bytes_written += 1
-							if bytes_written % 100 == 0:
-								print(f"{Fore.CYAN}[*] Decoding... {bytes_written} bytes decoded", end='\r')
-							try:
-								search_from = position + samples_per_bit
-								signal_start = search_from + bits[search_from:].index(0)
-							except ValueError:
-								break
-					print(f"\n{Fore.GREEN}The Decoded capture is saved at {Full_Decode_File}")
-					break
-				elif response in ['n', 'no']:
-					print(f"{Fore.YELLOW}Exiting...")
-					break
-				else:
-					print(f"{Fore.RED}Invalid response please enter 'y' or 'n'.")
+			elif response in ['n', 'no']:
+				print(f"{Fore.YELLOW}Exiting...")
+				break
+			else:
+				print(f"{Fore.RED}Invalid response please enter 'y' or 'n'.")
 			break
 
 	return decoded_data
@@ -252,6 +269,7 @@ with zipfile.ZipFile(CaptureFile, 'r') as capture:
 	df = [f for f in files if f.startswith("logic-1")]
 
 	## breaks down the logic files into one byte array
+	print(f"{Fore.GREEN}Reading data in file...")
 	for data_files in df:
 		full_bytes = capture.read(data_files)
 		raw_data.extend(full_bytes)
